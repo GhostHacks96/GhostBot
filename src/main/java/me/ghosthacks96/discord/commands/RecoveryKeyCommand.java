@@ -6,14 +6,17 @@ import net.dv8tion.jda.api.hooks.ListenerAdapter;
 import net.dv8tion.jda.api.interactions.commands.OptionType;
 import net.dv8tion.jda.api.interactions.commands.build.CommandData;
 import net.dv8tion.jda.api.interactions.commands.build.Commands;
+import net.dv8tion.jda.api.utils.FileUpload;
 
 import java.awt.*;
+import java.io.ByteArrayInputStream;
 import java.io.IOException;
 import java.net.URI;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.time.Duration;
+
 import java.util.UUID;
 import java.util.regex.Pattern;
 
@@ -22,18 +25,14 @@ import com.google.gson.JsonObject;
 
 public class RecoveryKeyCommand extends ListenerAdapter {
 
-    private static final String API_URL = "https://ghosthacks96.me/API.php";
+    private static final String API_URL = "https://ghosthacks96.me/site/GhostAPI/API.php";
     private static final Pattern EMAIL_PATTERN = Pattern.compile(
             "^[a-zA-Z0-9_+&*-]+(?:\\.[a-zA-Z0-9_+&*-]+)*@(?:[a-zA-Z0-9-]+\\.)+[a-zA-Z]{2,7}$"
     );
 
-    private final HttpClient httpClient;
     private final Gson gson;
 
     public RecoveryKeyCommand() {
-        this.httpClient = HttpClient.newBuilder()
-                .connectTimeout(Duration.ofSeconds(10))
-                .build();
         this.gson = new Gson();
     }
 
@@ -68,23 +67,32 @@ public class RecoveryKeyCommand extends ListenerAdapter {
             boolean success = requestRecoveryKey(email, recoveryUuid, event.getUser().getId());
 
             if (success) {
-                // Success response
+                // Create recovery file content
+                String fileContent = createRecoveryFileContent(email, recoveryUuid, event.getUser().getId());
+
+                // Create file upload
+                ByteArrayInputStream fileStream = new ByteArrayInputStream(fileContent.getBytes());
+                FileUpload fileUpload = FileUpload.fromData(fileStream, "rt.txt");
+
+                // Success response with file
                 EmbedBuilder embed = new EmbedBuilder()
                         .setTitle("✅ Recovery Key Generated")
-                        .setDescription("A recovery key has been generated for your account.")
+                        .setDescription("Your recovery key has been generated and is attached as a file.")
                         .addField("Email", email, false)
-                        .addField("Recovery Key", "`" + recoveryUuid + "`", false)
-                        .addField("⚠️ Important",
-                                "• Save this key in a secure location\n" +
-                                        "• This key can only be used once\n" +
-                                        "• Keep it confidential and don't share it", false)
+                        .addField("📁 File Instructions",
+                                "• Download the attached `rt.txt` file\n" +
+                                        "• Save it to: `%APPDATA%\\ghosthacks96\\GhostSecure\\rt.txt`\n" +
+                                        "• Should be in the same as the programs other needed files!\n" , false)
+                        .addField("Notice"," If you save this file in the correct location and launch the app. but it failes to enter recovery mode. Create a ticket...",false)
                         .setColor(Color.GREEN)
                         .setFooter("Recovery Key System", event.getJDA().getSelfUser().getAvatarUrl());
 
-                event.getHook().editOriginalEmbeds(embed.build()).queue();
+                event.getHook().editOriginalEmbeds(embed.build())
+                        .setFiles(fileUpload)
+                        .queue();
 
                 // Log the request (optional)
-                System.out.println("Recovery key generated for user " + event.getUser().getId() +
+                System.out.println("Recovery key file generated for user " + event.getUser().getId() +
                         " with email: " + email + " | UUID: " + recoveryUuid);
 
             } else {
@@ -101,6 +109,10 @@ public class RecoveryKeyCommand extends ListenerAdapter {
         }
     }
 
+    private String createRecoveryFileContent(String email, String uuid, String discordUserId) {
+        return uuid;
+    }
+
     private boolean requestRecoveryKey(String email, String uuid, String discordUserId) {
         try {
             // Create JSON payload
@@ -110,30 +122,43 @@ public class RecoveryKeyCommand extends ListenerAdapter {
             payload.addProperty("uuid", uuid);
             payload.addProperty("discord_user_id", discordUserId);
 
-            // Create HTTP request
-            HttpRequest request = HttpRequest.newBuilder()
-                    .uri(URI.create(API_URL))
-                    .header("Content-Type", "application/json")
-                    .header("User-Agent", "GhostBot-Discord/1.0")
-                    .timeout(Duration.ofSeconds(30))
-                    .POST(HttpRequest.BodyPublishers.ofString(payload.toString()))
-                    .build();
+            // Setup HttpURLConnection
+            java.net.URL url = new java.net.URL(API_URL);
+            java.net.HttpURLConnection conn = (java.net.HttpURLConnection) url.openConnection();
+            conn.setRequestMethod("POST");
+            conn.setRequestProperty("Content-Type", "application/json");
+            conn.setRequestProperty("User-Agent", "GhostBot-Discord/1.0");
+            conn.setConnectTimeout(10000); // 10 seconds
+            conn.setReadTimeout(30000); // 30 seconds
+            conn.setDoOutput(true);
 
-            // Send request
-            HttpResponse<String> response = httpClient.send(request,
-                    HttpResponse.BodyHandlers.ofString());
-
-            // Check response
-            if (response.statusCode() == 200) {
-                JsonObject responseJson = gson.fromJson(response.body(), JsonObject.class);
-                return responseJson.has("success") && responseJson.get("success").getAsBoolean();
-            } else {
-                System.err.println("API returned status code: " + response.statusCode());
-                System.err.println("Response body: " + response.body());
-                return false;
+            // Write JSON payload
+            try (java.io.OutputStream os = conn.getOutputStream()) {
+                byte[] input = payload.toString().getBytes(java.nio.charset.StandardCharsets.UTF_8);
+                os.write(input, 0, input.length);
             }
 
-        } catch (IOException | InterruptedException e) {
+            // Read response
+            int status = conn.getResponseCode();
+            java.io.InputStream is = (status == 200) ? conn.getInputStream() : conn.getErrorStream();
+            StringBuilder response = new StringBuilder();
+            try (java.io.BufferedReader br = new java.io.BufferedReader(new java.io.InputStreamReader(is, java.nio.charset.StandardCharsets.UTF_8))) {
+                String line;
+                while ((line = br.readLine()) != null) {
+                    response.append(line.trim());
+                }
+            }
+            conn.disconnect();
+
+            if (status == 200) {
+                JsonObject responseJson = gson.fromJson(response.toString(), JsonObject.class);
+                return responseJson.has("success") && responseJson.get("success").getAsBoolean();
+            } else {
+                System.err.println("API returned status code: " + status);
+                System.err.println("Response body: " + response);
+                return false;
+            }
+        } catch (IOException e) {
             System.err.println("Network error when requesting recovery key: " + e.getMessage());
             return false;
         } catch (Exception e) {

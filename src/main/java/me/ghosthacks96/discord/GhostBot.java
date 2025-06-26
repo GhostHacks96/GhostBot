@@ -4,6 +4,7 @@ import me.ghosthacks96.discord.commands.RecoveryKeyCommand;
 import me.ghosthacks96.discord.commands.TicketCommand;
 import me.ghosthacks96.discord.commands.TicketCloseCommand;
 import me.ghosthacks96.discord.events.AntiSpamListener;
+import me.ghosthacks96.discord.events.AuditLogListener;
 import net.dv8tion.jda.api.JDA;
 import net.dv8tion.jda.api.JDABuilder;
 import net.dv8tion.jda.api.requests.GatewayIntent;
@@ -15,6 +16,7 @@ public class GhostBot {
     private RecoveryKeyCommand recoveryKeyCommand;
     private TicketCommand ticketCommand;
     private TicketCloseCommand ticketCloseCommand;
+    private AuditLogListener auditLogListener;
 
     public static void main(String[] args) {
         new GhostBot().start();
@@ -22,11 +24,29 @@ public class GhostBot {
 
     public void start() {
         try {
+            // Start async console thread for shutdown
+            Thread consoleThread = new Thread(() -> {
+                java.util.Scanner scanner = new java.util.Scanner(System.in);
+                while (true) {
+                    String input = scanner.nextLine();
+                    if (input.equalsIgnoreCase("stop") || input.equalsIgnoreCase("exit") || input.equalsIgnoreCase("quit")) {
+                        System.out.println("Shutting down bot...");
+                        if (jda != null) {
+                            jda.shutdown();
+                        }
+                        System.exit(0);
+                    }
+                }
+            });
+            consoleThread.setDaemon(true);
+            consoleThread.start();
+
             // Initialize components
             antiSpamListener = new AntiSpamListener();
             recoveryKeyCommand = new RecoveryKeyCommand();
             ticketCommand = new TicketCommand();
             ticketCloseCommand = new TicketCloseCommand();
+            auditLogListener = new AuditLogListener();
 
             // Build JDA instance
             jda = JDABuilder.createDefault("")
@@ -35,7 +55,7 @@ public class GhostBot {
                             GatewayIntent.MESSAGE_CONTENT,
                             GatewayIntent.GUILD_MEMBERS
                     )
-                    .addEventListeners(antiSpamListener, recoveryKeyCommand, ticketCommand, ticketCloseCommand)
+                    .addEventListeners(antiSpamListener, recoveryKeyCommand, ticketCommand, ticketCloseCommand, auditLogListener)
                     .build();
 
             // Wait for bot to be ready
