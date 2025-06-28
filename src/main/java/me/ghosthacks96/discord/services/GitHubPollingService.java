@@ -53,7 +53,7 @@ public class GitHubPollingService {
     }
 
     public void startPolling() {
-        int intervalMinutes = 15;
+        int intervalMinutes = 5;
 
         // Poll for commits/pushes
         scheduler.scheduleAtFixedRate(() -> {
@@ -75,13 +75,16 @@ public class GitHubPollingService {
             } catch (InterruptedException e) {
                 throw new RuntimeException(e);
             }
-        }, 30, intervalMinutes, TimeUnit.SECONDS); // Offset by 30 seconds
+        }, 120, intervalMinutes, TimeUnit.SECONDS); // Offset by 30 seconds
     }
 
     private void checkForNewCommits(String repository) throws IOException, InterruptedException {
         String url = String.format("https://api.github.com/repos/%s/commits", repository);
         OffsetDateTime since = lastCheckTimes.get(repository);
-
+        if (since == null) {
+            // Default to 1 hour ago if never checked before
+            since = OffsetDateTime.now().minusHours(1);
+        }
         HttpRequest request = HttpRequest.newBuilder()
                 .uri(URI.create(url + "?since=" + since.format(DateTimeFormatter.ISO_INSTANT)))
                 .header("Authorization", "Bearer " + githubToken)
@@ -254,6 +257,18 @@ public class GitHubPollingService {
                 .setUrl(comment.get("html_url").getAsString());
 
         channel.sendMessageEmbeds(embed.build()).queue();
+    }
+
+    /**
+     * Manually trigger a check for new commits and comments.
+     */
+    public void manualCheck() {
+        try {
+            checkForNewCommits(repo);
+            checkForNewComments(repo);
+        } catch (Exception e) {
+            System.err.println("Manual check failed for repo: " + repo + ", error: " + e.getMessage());
+        }
     }
 
 
