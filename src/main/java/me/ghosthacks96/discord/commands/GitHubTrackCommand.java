@@ -22,8 +22,8 @@ import java.util.concurrent.ConcurrentMap;
 public class GitHubTrackCommand extends ListenerAdapter {
 
     // In-memory storage for tracked items (consider using a database for persistence)
-    private static final ConcurrentMap<String, TrackedRepository> trackedRepos = new ConcurrentHashMap<>();
-    private static final ConcurrentMap<String, TrackedPackage> trackedPackages = new ConcurrentHashMap<>();
+    public static final ConcurrentMap<String, TrackedRepository> trackedRepos = new ConcurrentHashMap<>();
+    public static final ConcurrentMap<String, TrackedPackage> trackedPackages = new ConcurrentHashMap<>();
 
     public static CommandData getCommandData() {
         OptionData typeOption = new OptionData(OptionType.STRING, "type", "Type of item to track", true)
@@ -170,7 +170,21 @@ public class GitHubTrackCommand extends ListenerAdapter {
                             .addField("📦 Repository", name, true)
                             .addField("⏰ Status", "Checking for new releases, commits, and issues...", false);
 
-                    // TODO: Implement actual GitHub API checking logic here
+                    // Find the repo in GhostBot's polling services and trigger manual check
+                    GhostBot bot = GhostBot.getInstance();
+                    boolean found = false;
+                    for (String repoFull : bot.repoPollingServices.keySet()) {
+                        String[] parts = repoFull.split("/");
+                        if (parts.length == 2 && parts[1].equalsIgnoreCase(name)) {
+                            bot.repoPollingServices.get(repoFull).manualCheck();
+                            found = true;
+                            break;
+                        }
+                    }
+                    if (!found) {
+                        embed.setColor(Color.RED)
+                                .setDescription("❌ Repository `" + name + "` is not being polled (service not found).\nTry re-adding it or restarting the bot.");
+                    }
                 } else {
                     embed.setColor(Color.RED)
                             .setDescription("❌ Repository `" + name + "` is not being tracked.")
@@ -332,7 +346,7 @@ public class GitHubTrackCommand extends ListenerAdapter {
         final String channelId;
         final long addedTimestamp;
 
-        TrackedRepository(String name, String guildId, String channelId) {
+        public TrackedRepository(String name, String guildId, String channelId) {
             this.name = name;
             this.guildId = guildId;
             this.channelId = channelId;

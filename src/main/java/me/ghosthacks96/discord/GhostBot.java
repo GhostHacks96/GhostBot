@@ -19,6 +19,8 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 
+import static me.ghosthacks96.discord.commands.GitHubTrackCommand.trackedRepos;
+
 public class GhostBot {
 
     private static String DISCORD_TOKEN;
@@ -277,10 +279,14 @@ public class GhostBot {
             }
 
             if(!found) {
+                String name = repository.split("/")[1];
                 int pollingInterval = 5;
                 GitHubPollingService pollingService = new GitHubPollingService(jda, GITHUB_TOKEN,repository, channelId);
                 pollingService.startPolling();
                 repoPollingServices.put(repository, pollingService);
+                GitHubTrackCommand.TrackedRepository repo = new GitHubTrackCommand.TrackedRepository(name, jda.getGuilds().get(0).getId(), channelId);
+                 // Extract repo name from "owner/repo"
+                trackedRepos.put(name, repo);
             } else {
                 System.out.println("Repository polling already exists for: " + repository);
             }
