@@ -1,5 +1,6 @@
 package me.ghosthacks96.discord.commands;
 
+import me.ghosthacks96.discord.GhostBot;
 import net.dv8tion.jda.api.EmbedBuilder;
 import net.dv8tion.jda.api.Permission;
 import net.dv8tion.jda.api.entities.Guild;
@@ -111,7 +112,8 @@ public class GitHubTrackCommand extends ListenerAdapter {
                     TrackedRepository repo = new TrackedRepository(name, event.getGuild().getId(),
                             event.getChannel().getId());
                     trackedRepos.put(name.toLowerCase(), repo);
-
+                    // Notify GhostBot to start polling for this repo
+                    GhostBot.getInstance().addRepositoryPolling(event.getChannel().getId(), name.toLowerCase());
                     embed.setDescription("✅ Successfully added repository `" + name + "` to tracking list!")
                             .addField("📦 Repository", name, true)
                             .addField("📅 Added", java.time.OffsetDateTime.now()
@@ -250,6 +252,7 @@ public class GitHubTrackCommand extends ListenerAdapter {
             case "repo" -> {
                 removed = trackedRepos.remove(name.toLowerCase()) != null;
                 if (removed) {
+                    GhostBot.getInstance().removeRepositoryPolling(name);
                     embed.setColor(Color.GREEN)
                             .setDescription("✅ Successfully removed repository `" + name + "` from tracking list.");
                 } else {
@@ -343,4 +346,3 @@ public class GitHubTrackCommand extends ListenerAdapter {
         }
     }
 }
-

@@ -86,12 +86,36 @@ public class TicketCloseCommand extends ListenerAdapter {
             case "close_ticket" -> handleCloseTicketButton(event);
             case "confirm_close" -> handleConfirmClose(event);
             case "cancel_close" -> handleCancelClose(event);
-            case "claim_ticket" -> handleClaimTicket(event);
+            case "claim_ticket" -> {
+                if (hasAdminOrChangeNickPerms(event)) {
+                    handleClaimTicket(event);
+                } else {
+                    event.reply("You do not have permission to claim tickets.").setEphemeral(true).queue();
+                }
+            }
             case "change_priority" -> handleChangePriority(event);
             // Add handlers for priority buttons
-            case "priority_low" -> handlePriorityChange(event, "Low", Color.GREEN);
-            case "priority_normal" -> handlePriorityChange(event, "Normal", Color.YELLOW);
-            case "priority_high" -> handlePriorityChange(event, "High", Color.RED);
+            case "priority_low" -> {
+                if (hasAdminOrChangeNickPerms(event)) {
+                    handlePriorityChange(event, "Low", Color.GREEN);
+                } else {
+                    event.reply("You do not have permission to change ticket priority.").setEphemeral(true).queue();
+                }
+            }
+            case "priority_normal" -> {
+                if (hasAdminOrChangeNickPerms(event)) {
+                    handlePriorityChange(event, "Normal", Color.YELLOW);
+                } else {
+                    event.reply("You do not have permission to change ticket priority.").setEphemeral(true).queue();
+                }
+            }
+            case "priority_high" -> {
+                if (hasAdminOrChangeNickPerms(event)) {
+                    handlePriorityChange(event, "High", Color.RED);
+                } else {
+                    event.reply("You do not have permission to change ticket priority.").setEphemeral(true).queue();
+                }
+            }
         }
     }
 
@@ -329,5 +353,10 @@ public class TicketCloseCommand extends ListenerAdapter {
         }
 
         return false;
+    }
+
+    private boolean hasAdminOrChangeNickPerms(ButtonInteractionEvent event) {
+        return event.getMember() != null && (event.getMember().hasPermission(net.dv8tion.jda.api.Permission.ADMINISTRATOR)
+                || event.getMember().hasPermission(net.dv8tion.jda.api.Permission.NICKNAME_CHANGE));
     }
 }

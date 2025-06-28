@@ -1,5 +1,6 @@
 package me.ghosthacks96.discord;
 
+import me.ghosthacks96.discord.commands.GitHubTrackCommand;
 import me.ghosthacks96.discord.commands.RecoveryKeyCommand;
 import me.ghosthacks96.discord.commands.TicketCloseCommand;
 import me.ghosthacks96.discord.commands.TicketCommand;
@@ -14,6 +15,7 @@ import net.dv8tion.jda.api.requests.GatewayIntent;
 
 import java.io.File;
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
 
 public class GhostBot {
@@ -25,9 +27,10 @@ public class GhostBot {
     private TicketCommand ticketCommand;
     private TicketCloseCommand ticketCloseCommand;
     public AuditLogListener auditLogListener;
+    public GitHubTrackCommand githubCommand;
 
     public static String GITHUB_TOKEN;
-    public Set<GitHubPollingService> repoPollingServices;
+    public Map<String,GitHubPollingService> repoPollingServices;
 
     public static final Object lock = new Object();
     public static GhostBot instance;
@@ -95,6 +98,20 @@ public class GhostBot {
             configManager.registerFileConfig("main", "configs/config.yml");
             mainConfig = configManager.getConfig("main");
 
+            // Check for configs/github_repos.yml and register if missing
+            File githubReposFile = new File("configs/github_repos.yml");
+            if (!githubReposFile.exists()) {
+                // Example: create a default YAML with one owner and repo objects (name & channel_id)
+                List<String> defaultGithubRepos = List.of(
+                        "ghosthacks96:",
+                        "  - name: test",
+                        "    channel_id: '1234567890'",
+                        "  - name: test1",
+                        "    channel_id: '0987654321'"
+                );
+                java.nio.file.Files.write(githubReposFile.toPath(), defaultGithubRepos);
+            }
+            configManager.registerFileConfig("github_repos", "configs/github_repos.yml");
 
 
             if(mainConfig.getString("discord_token").equals("YOUR_DISCORD_BOT_TOKEN") ||
@@ -103,9 +120,6 @@ public class GhostBot {
 
                 System.exit(1);
             }
-
-
-
 
             // Initialize components based on config
             if (mainConfig.getBoolean("anti_spam_enabled", true)) {
@@ -129,12 +143,14 @@ public class GhostBot {
 
             // Always initialize recoveryKeyCommand (or add config if needed)
             recoveryKeyCommand = new RecoveryKeyCommand();
+            githubCommand = new GitHubTrackCommand();
 
             // Build JDA instance with only enabled listeners
             JDABuilder builder = JDABuilder.createDefault(mainConfig.getString("discord_token"))
                     .enableIntents(GatewayIntent.getIntents(GatewayIntent.ALL_INTENTS));
             if (antiSpamListener != null) builder.addEventListeners(antiSpamListener);
             builder.addEventListeners(recoveryKeyCommand);
+            builder.addEventListeners(githubCommand);
             if (ticketCommand != null) builder.addEventListeners(ticketCommand);
             if (ticketCloseCommand != null) builder.addEventListeners(ticketCloseCommand);
             if( auditLogListener != null) builder.addEventListeners(auditLogListener);
@@ -148,6 +164,44 @@ public class GhostBot {
 
             System.out.println("GhostBot is ready!");
 
+            Config githubReposConfig = configManager.getConfig("github_repos");
+
+            // Collect all repos to track from githubReposConfig
+            List<String> reposToTrack = new java.util.ArrayList<>();
+            if (githubReposConfig != null) {
+                for (String owner : githubReposConfig.getData().keySet()) {
+                    Object repoListObj = githubReposConfig.get(owner);
+                    if (repoListObj instanceof List<?> repoList) {
+                        for (Object repoObj : repoList) {
+                            if (repoObj instanceof Map<?,?> repoMap) {
+                                String repoName = (String) repoMap.get("name");
+                                String channelId = (String) repoMap.get("channel_id");
+                                // Ignore default/test values
+                                if (repoName != null && channelId != null &&
+                                    !repoName.startsWith("test") && !channelId.equals("1234567890") && !channelId.equals("0987654321")) {
+                                    reposToTrack.add(owner + "/" + repoName+":"+ channelId);
+                                    // Optionally: store channelId mapping if needed
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            if(reposToTrack.isEmpty()) {
+                System.out.println("No valid GitHub repositories found to track. Please configure your github_repos.yml file.");
+            } else {
+                System.out.println("Found " + reposToTrack.size() + " repositories to track:");
+                for (String repo : reposToTrack) {
+                    String[] parts = repo.split(":");
+                    if (parts.length == 2) {
+                        String repository = parts[0];
+                        String channelId = parts[1];
+                        addRepositoryPolling(channelId, repository);
+                    } else {
+                        System.err.println("Invalid repository format: " + repo);
+                    }
+                }
+            }
 
 
             // Add shutdown hook for graceful shutdown
@@ -161,12 +215,14 @@ public class GhostBot {
 
     private void registerCommands() {
         try {
+            jda.updateCommands().queue();
             // Register commands globally (takes up to 1 hour to propagate)
             jda.updateCommands()
                     .addCommands(
                             RecoveryKeyCommand.getCommandData(),
                             TicketCommand.getCommandData(),
-                            TicketCloseCommand.getCommandData()
+                            TicketCloseCommand.getCommandData(),
+                            GitHubTrackCommand.getCommandData()
                     )
                     .queue(
                             success -> System.out.println("Successfully registered commands!"),
@@ -177,8 +233,106 @@ public class GhostBot {
         }
     }
 
+
+    /**
+     * Add a new repository to be polled
+     * @param channelId The Discord channel ID to send notifications to
+     * @param repository The repository in format "owner/repo"
+     */
+    public void addRepositoryPolling(String channelId, String repository) {
+        try {
+            if (GITHUB_TOKEN == null || GITHUB_TOKEN.equals("YOUR_GITHUB_TOKEN")) {
+                throw new IllegalStateException("GitHub token not configured");
+            }
+            boolean found = false;
+
+            for(String repo : repoPollingServices.keySet()) {
+                if(repo.equals(repository)) {
+                    found = true;
+                    break;
+                }
+            }
+
+            if(!found) {
+                int pollingInterval = 5;
+                GitHubPollingService pollingService = new GitHubPollingService(jda, GITHUB_TOKEN,repository, channelId);
+                pollingService.startPolling();
+                repoPollingServices.put(repository, pollingService);
+            } else {
+                System.out.println("Repository polling already exists for: " + repository);
+            }
+
+            System.out.println("Added repository polling: " + repository + " -> Channel: " + channelId);
+        } catch (Exception e) {
+            System.err.println("Failed to add repository polling for " + repository + ": " + e.getMessage());
+            throw new RuntimeException("Failed to add repository polling", e);
+        }
+    }
+
+    /**
+     * Remove all polling services for a specific repository
+     * @param repository The repository in format "owner/repo"
+     */
+    public void removeRepositoryPolling(String repository) {
+        Map<String,GitHubPollingService> repoPollingServices_old = repoPollingServices;
+
+        for(String repo : repoPollingServices_old.keySet()) {
+            if(repo.equals(repository)) {
+                GitHubPollingService service = repoPollingServices_old.get(repo);
+                if(service != null) {
+                    service.shutdown();
+                    repoPollingServices.remove(repo);
+                    System.out.println("Removed repository polling for: " + repo);
+                    break;
+                } else {
+                    System.err.println("No polling service found for repository: " + repo);
+                }
+            }
+        }
+
+
+        System.out.println("Repository polling removal requested for: " + repository);
+        System.out.println("Note: Individual repository removal not fully implemented. Consider restarting bot to clear all polling.");
+    }
+
+
+
     private void shutdown() {
         System.out.println("Shutting down GhostBot...");
+        // Reset GitHub repo polling data to only store currently tracked repos in github_repos config
+        try {
+            Config githubReposConfig = configManager.getConfig("github_repos");
+            if (githubReposConfig != null && repoPollingServices != null) {
+                // Clear all owners
+                githubReposConfig.getData().clear();
+                // Refill with only currently tracked repos
+                for (Map.Entry<String, GitHubPollingService> entry : repoPollingServices.entrySet()) {
+                    String repoFull = entry.getKey(); // owner/repo
+                    GitHubPollingService service = entry.getValue();
+                    String[] parts = repoFull.split("/");
+                    if (parts.length == 2) {
+                        String owner = parts[0];
+                        String repo = parts[1];
+                        String channelId = service.getChannelId();
+                        // Add to config
+                        List<Object> ownerRepos = (List<Object>) githubReposConfig.get(owner);
+                        if (ownerRepos == null) {
+                            ownerRepos = new java.util.ArrayList<>();
+                            githubReposConfig.set(owner, ownerRepos);
+                        }
+                        java.util.Map<String, Object> repoObj = new java.util.HashMap<>();
+                        repoObj.put("name", repo);
+                        repoObj.put("channel_id", channelId);
+                        ownerRepos.add(repoObj);
+                    }
+                }
+                githubReposConfig.save();
+            }
+        } catch (Exception e) {
+            System.err.println("Error updating github_repos config on shutdown: " + e.getMessage());
+        }
+
+        // Optionally, persist only tracked repos to config or file here if needed
 
         if (antiSpamListener != null) {
             antiSpamListener.shutdown();

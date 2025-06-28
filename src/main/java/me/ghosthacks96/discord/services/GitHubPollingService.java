@@ -6,6 +6,7 @@ import net.dv8tion.jda.api.EmbedBuilder;
 import com.google.gson.Gson;
 import com.google.gson.JsonObject;
 import com.google.gson.JsonArray;
+import net.dv8tion.jda.api.entities.channel.Channel;
 import net.dv8tion.jda.api.entities.channel.concrete.TextChannel;
 
 import java.io.IOException;
@@ -29,12 +30,14 @@ public class GitHubPollingService {
     private final String channelId;
     private final Set<String> processedEventIds;
     private final ScheduledExecutorService scheduler;
+    private final String repo;
 
     // Store last check times for each repo
     private final Map<String, OffsetDateTime> lastCheckTimes;
 
-    public GitHubPollingService(JDA jda, String githubToken, String channelId) {
+    public GitHubPollingService(JDA jda, String githubToken, String repoID, String channelId) {
         this.jda = jda;
+        this.repo = repoID;
         this.httpClient = HttpClient.newHttpClient();
         this.gson = new Gson();
         this.githubToken = githubToken;
@@ -42,33 +45,35 @@ public class GitHubPollingService {
         this.processedEventIds = new HashSet<>();
         this.scheduler = Executors.newScheduledThreadPool(2);
         this.lastCheckTimes = new HashMap<>();
-        setUpShutdownHook();
+        Runtime.getRuntime().addShutdownHook(new Thread(this::shutdown));
     }
 
-    public void startPolling(List<String> repositories, int intervalMinutes) {
-        for (String repo : repositories) {
-            lastCheckTimes.put(repo, OffsetDateTime.now().minusHours(1)); // Start from 1 hour ago
-        }
+    public String getChannelId() {
+        return channelId;
+    }
+
+    public void startPolling() {
+        int intervalMinutes = 15;
 
         // Poll for commits/pushes
         scheduler.scheduleAtFixedRate(() -> {
-            for (String repo : repositories) {
-                try {
-                    checkForNewCommits(repo);
-                } catch (Exception e) {
-                    e.printStackTrace();
-                }
+            try {
+                checkForNewCommits(repo);
+            } catch (IOException e) {
+                throw new RuntimeException(e);
+            } catch (InterruptedException e) {
+                throw new RuntimeException(e);
             }
         }, 0, intervalMinutes, TimeUnit.MINUTES);
 
         // Poll for comments
         scheduler.scheduleAtFixedRate(() -> {
-            for (String repo : repositories) {
-                try {
-                    checkForNewComments(repo);
-                } catch (Exception e) {
-                    e.printStackTrace();
-                }
+            try {
+                checkForNewComments(repo);
+            } catch (IOException e) {
+                throw new RuntimeException(e);
+            } catch (InterruptedException e) {
+                throw new RuntimeException(e);
             }
         }, 30, intervalMinutes, TimeUnit.SECONDS); // Offset by 30 seconds
     }
@@ -251,7 +256,16 @@ public class GitHubPollingService {
         channel.sendMessageEmbeds(embed.build()).queue();
     }
 
-    public void setUpShutdownHook() {
-            Runtime.getRuntime().addShutdownHook(new Thread(scheduler::shutdown));
+
+    public void shutdown() {
+        scheduler.shutdown();
+        try {
+            if (!scheduler.awaitTermination(30, TimeUnit.SECONDS)) {
+                scheduler.shutdownNow();
+            }
+        } catch (InterruptedException e) {
+            scheduler.shutdownNow();
+        }
+        System.out.println("GitHubPollingService shutdown complete.");
     }
 }
