@@ -1,0 +1,15 @@
+<configuration>
+    <!-- Set Jetty and all org.eclipse.jetty logs to WARN -->
+    <logger name="org.eclipse.jetty" level="WARN"/>
+    <!-- Optionally, set root logger to INFO or WARN to reduce all logging -->
+    <root level="INFO">
+        <appender-ref ref="STDOUT"/>
+    </root>
+
+    <appender name="STDOUT" class="ch.qos.logback.core.ConsoleAppender">
+        <encoder>
+            <pattern>%d{yyyy-MM-dd HH:mm:ss} %-5level [%thread] %logger{36} - %msg%n</pattern>
+        </encoder>
+    </appender>
+</configuration>
+

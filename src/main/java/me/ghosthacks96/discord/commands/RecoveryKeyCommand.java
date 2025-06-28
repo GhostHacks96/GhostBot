@@ -1,11 +1,15 @@
 package me.ghosthacks96.discord.commands;
 
+import me.ghosthacks96.discord.GhostBot;
+import me.ghosthacks96.discord.configs.Config;
+import me.ghosthacks96.discord.configs.ConfigManager;
 import net.dv8tion.jda.api.EmbedBuilder;
 import net.dv8tion.jda.api.events.interaction.command.SlashCommandInteractionEvent;
 import net.dv8tion.jda.api.hooks.ListenerAdapter;
 import net.dv8tion.jda.api.interactions.commands.OptionType;
 import net.dv8tion.jda.api.interactions.commands.build.CommandData;
 import net.dv8tion.jda.api.interactions.commands.build.Commands;
+import net.dv8tion.jda.api.interactions.commands.build.OptionData;
 import net.dv8tion.jda.api.utils.FileUpload;
 
 import java.awt.*;
@@ -17,6 +21,7 @@ import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.time.Duration;
 
+import java.util.List;
 import java.util.UUID;
 import java.util.regex.Pattern;
 
@@ -37,6 +42,8 @@ public class RecoveryKeyCommand extends ListenerAdapter {
     }
 
     public static CommandData getCommandData() {
+
+
         return Commands.slash("recovery", "Request a recovery key for your account")
                 .addOption(OptionType.STRING, "email", "Your email address", true);
     }
