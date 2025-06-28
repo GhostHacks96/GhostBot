@@ -11,6 +11,7 @@ import me.ghosthacks96.discord.events.AuditLogListener;
 import me.ghosthacks96.discord.services.GitHubPollingService;
 import net.dv8tion.jda.api.JDA;
 import net.dv8tion.jda.api.JDABuilder;
+import net.dv8tion.jda.api.entities.Guild;
 import net.dv8tion.jda.api.requests.GatewayIntent;
 
 import java.io.File;
@@ -145,6 +146,13 @@ public class GhostBot {
             recoveryKeyCommand = new RecoveryKeyCommand();
             githubCommand = new GitHubTrackCommand();
 
+            GITHUB_TOKEN = mainConfig.getString("github_token");
+
+            // Initialize repoPollingServices map before use
+            if (repoPollingServices == null) {
+                repoPollingServices = new java.util.HashMap<>();
+            }
+
             // Build JDA instance with only enabled listeners
             JDABuilder builder = JDABuilder.createDefault(mainConfig.getString("discord_token"))
                     .enableIntents(GatewayIntent.getIntents(GatewayIntent.ALL_INTENTS));
@@ -165,6 +173,7 @@ public class GhostBot {
             System.out.println("GhostBot is ready!");
 
             Config githubReposConfig = configManager.getConfig("github_repos");
+            githubReposConfig.load();
 
             // Collect all repos to track from githubReposConfig
             List<String> reposToTrack = new java.util.ArrayList<>();
@@ -215,21 +224,35 @@ public class GhostBot {
 
     private void registerCommands() {
         try {
-            jda.updateCommands().queue();
-            // Register commands globally (takes up to 1 hour to propagate)
-            jda.updateCommands()
-                    .addCommands(
-                            RecoveryKeyCommand.getCommandData(),
-                            TicketCommand.getCommandData(),
-                            TicketCloseCommand.getCommandData(),
-                            GitHubTrackCommand.getCommandData()
-                    )
-                    .queue(
-                            success -> System.out.println("Successfully registered commands!"),
-                            error -> System.err.println("Failed to register commands: " + error.getMessage())
-                    );
+            //jda.updateCommands().queue();
+            // Get all guilds the bot is in
+            List<Guild> guilds = jda.getGuilds();
+
+            if (guilds.isEmpty()) {
+                System.out.println("Bot is not in any guilds. Commands will not be registered.");
+                return;
+            }
+
+            System.out.println("Registering commands to " + guilds.size() + " guild(s)...");
+
+            // Register commands to each guild individually
+            for (Guild guild : guilds) {
+                guild.updateCommands()
+                        .addCommands(
+                                RecoveryKeyCommand.getCommandData(),
+                                TicketCommand.getCommandData(),
+                                TicketCloseCommand.getCommandData(),
+                                GitHubTrackCommand.getCommandData()
+                        )
+                        .queue(
+                                success -> System.out.println("Successfully registered commands to guild: " + guild.getName() + " (" + guild.getId() + ")"),
+                                error -> System.err.println("Failed to register commands to guild " + guild.getName() + ": " + error.getMessage())
+                        );
+            }
+
         } catch (Exception e) {
             System.err.println("Error registering commands: " + e.getMessage());
+            e.printStackTrace();
         }
     }
 

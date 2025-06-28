@@ -27,7 +27,7 @@ public class GitHubTrackCommand extends ListenerAdapter {
 
     public static CommandData getCommandData() {
         OptionData typeOption = new OptionData(OptionType.STRING, "type", "Type of item to track", true)
-                .addChoice("Repository", "repo")
+                .addChoice("Repo", "repo")
                 .addChoice("Package", "package");
 
 
@@ -39,7 +39,7 @@ public class GitHubTrackCommand extends ListenerAdapter {
                                 .addOption(OptionType.STRING, "name", "Repository (owner/repo) or package name", true),
 
                         new SubcommandData("check", "Manually check for updates")
-                                .addOption(OptionType.STRING, "type", "Type to check", true)
+                                .addOptions(typeOption)
                                 .addOption(OptionType.STRING, "name", "Name to check", true),
 
                         new SubcommandData("list", "List all tracked items"),
@@ -82,17 +82,25 @@ public class GitHubTrackCommand extends ListenerAdapter {
                 case "list" -> handleListCommand(event);
                 case "untrack" -> handleUntrackCommand(event);
                 case "help" -> handleHelpCommand(event);
-                default -> event.getHook().editOriginal("❌ Unknown subcommand.").queue();
+                default -> event.getHook().editOriginal("❌ Unknown subcommand. Please check your input and try again.").queue();
             }
         } catch (Exception e) {
             System.err.println("Error handling GitHub command: " + e.getMessage());
-            e.printStackTrace();
-            event.getHook().editOriginal("❌ An error occurred while processing your request. Please try again.").queue();
+            if (e.getMessage() != null) {
+                event.getHook().editOriginal("❌ An error occurred: " + e.getMessage()).queue();
+            } else {
+                event.getHook().editOriginal("❌ An unknown error occurred. Please try again or contact an admin.").queue();
+            }
         }
     }
 
     private void handleTrackCommand(SlashCommandInteractionEvent event) {
-        String type = event.getOption("type").getAsString();
+        // Defensive null checks for options
+        if (event.getOption("type") == null || event.getOption("name") == null) {
+            event.getHook().editOriginal("❌ Missing required options. Please specify both type and name.").queue();
+            return;
+        }
+        String type = event.getOption("type").getAsString().toLowerCase();
         String name = event.getOption("name").getAsString();
 
         EmbedBuilder embed = new EmbedBuilder()
