@@ -10,6 +10,7 @@ import net.dv8tion.jda.api.hooks.ListenerAdapter;
 import net.dv8tion.jda.api.interactions.commands.OptionType;
 import net.dv8tion.jda.api.interactions.commands.build.CommandData;
 import net.dv8tion.jda.api.interactions.commands.build.Commands;
+import net.dv8tion.jda.api.interactions.commands.build.OptionData;
 import net.dv8tion.jda.api.interactions.components.buttons.Button;
 
 import java.awt.*;
@@ -25,9 +26,13 @@ public class TicketCommand extends ListenerAdapter {
     private static final String TICKET_PREFIX = "ticket-";
 
     public static CommandData getCommandData() {
+        OptionData priorityOption = new OptionData(OptionType.STRING, "priority", "Priority level of the ticket", true)
+                .addChoice("Severe", "Severe")
+                .addChoice("Normal", "Normal")
+                .addChoice("Low", "Low");
         return Commands.slash("ticket", "Create a support ticket")
                 .addOption(OptionType.STRING, "reason", "Reason for creating the ticket", true)
-                .addOption(OptionType.STRING, "priority", "Priority level of the ticket", false);
+                .addOptions(priorityOption);
     }
 
     @Override

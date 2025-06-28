@@ -1,8 +1,8 @@
 package me.ghosthacks96.discord;
 
 import me.ghosthacks96.discord.commands.RecoveryKeyCommand;
-import me.ghosthacks96.discord.commands.TicketCommand;
 import me.ghosthacks96.discord.commands.TicketCloseCommand;
+import me.ghosthacks96.discord.commands.TicketCommand;
 import me.ghosthacks96.discord.events.AntiSpamListener;
 import me.ghosthacks96.discord.events.AuditLogListener;
 import net.dv8tion.jda.api.JDA;
@@ -16,10 +16,24 @@ public class GhostBot {
     private RecoveryKeyCommand recoveryKeyCommand;
     private TicketCommand ticketCommand;
     private TicketCloseCommand ticketCloseCommand;
-    private AuditLogListener auditLogListener;
+    public AuditLogListener auditLogListener;
+
+    public static final Object lock = new Object();
+    public static GhostBot instance;
+
+    public static GhostBot getInstance() {
+        if (instance == null) {
+            synchronized (lock) {
+                if (instance == null) {
+                    instance = new GhostBot();
+                }
+            }
+        }
+        return instance;
+    }
 
     public static void main(String[] args) {
-        new GhostBot().start();
+        getInstance().start();
     }
 
     public void start() {
@@ -46,16 +60,11 @@ public class GhostBot {
             recoveryKeyCommand = new RecoveryKeyCommand();
             ticketCommand = new TicketCommand();
             ticketCloseCommand = new TicketCloseCommand();
-            auditLogListener = new AuditLogListener();
 
             // Build JDA instance
             jda = JDABuilder.createDefault("")
-                    .enableIntents(
-                            GatewayIntent.GUILD_MESSAGES,
-                            GatewayIntent.MESSAGE_CONTENT,
-                            GatewayIntent.GUILD_MEMBERS
-                    )
-                    .addEventListeners(antiSpamListener, recoveryKeyCommand, ticketCommand, ticketCloseCommand, auditLogListener)
+                    .enableIntents(GatewayIntent.getIntents(GatewayIntent.ALL_INTENTS))
+                    .addEventListeners(antiSpamListener, recoveryKeyCommand, ticketCommand, ticketCloseCommand)
                     .build();
 
             // Wait for bot to be ready
@@ -88,16 +97,6 @@ public class GhostBot {
                             success -> System.out.println("Successfully registered commands!"),
                             error -> System.err.println("Failed to register commands: " + error.getMessage())
                     );
-
-            // For testing, you can register commands to a specific guild (instant)
-            // Replace GUILD_ID with your test server's ID
-            /*
-            jda.getGuildById("YOUR_GUILD_ID_HERE")
-                .updateCommands()
-                .addCommands(RecoveryKeyCommand.getCommandData())
-                .queue();
-            */
-
         } catch (Exception e) {
             System.err.println("Error registering commands: " + e.getMessage());
         }

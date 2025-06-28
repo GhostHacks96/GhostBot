@@ -1,5 +1,6 @@
 package me.ghosthacks96.discord.commands;
 
+import me.ghosthacks96.discord.GhostBot;
 import net.dv8tion.jda.api.EmbedBuilder;
 import net.dv8tion.jda.api.Permission;
 import net.dv8tion.jda.api.entities.Guild;
@@ -13,10 +14,10 @@ import net.dv8tion.jda.api.interactions.commands.OptionType;
 import net.dv8tion.jda.api.interactions.commands.build.CommandData;
 import net.dv8tion.jda.api.interactions.commands.build.Commands;
 import net.dv8tion.jda.api.interactions.components.buttons.Button;
+import net.dv8tion.jda.api.utils.FileUpload;
 
 import java.awt.*;
-import java.io.ByteArrayOutputStream;
-import java.io.IOException;
+import java.io.ByteArrayInputStream;
 import java.time.format.DateTimeFormatter;
 import java.util.List;
 import java.util.concurrent.TimeUnit;
@@ -87,6 +88,10 @@ public class TicketCloseCommand extends ListenerAdapter {
             case "cancel_close" -> handleCancelClose(event);
             case "claim_ticket" -> handleClaimTicket(event);
             case "change_priority" -> handleChangePriority(event);
+            // Add handlers for priority buttons
+            case "priority_low" -> handlePriorityChange(event, "Low", Color.GREEN);
+            case "priority_normal" -> handlePriorityChange(event, "Normal", Color.YELLOW);
+            case "priority_high" -> handlePriorityChange(event, "High", Color.RED);
         }
     }
 
@@ -129,7 +134,10 @@ public class TicketCloseCommand extends ListenerAdapter {
 
         if (member == null) return;
 
-        closeTicket(channel, member, "Closed via button");
+        // Get the reason from the original interaction if available
+        String reason = "Closed via confirmation";
+
+        closeTicket(channel, member, reason);
     }
 
     private void handleCancelClose(ButtonInteractionEvent event) {
@@ -145,7 +153,7 @@ public class TicketCloseCommand extends ListenerAdapter {
 
         // Check if user is staff
         if (!member.hasPermission(Permission.ADMINISTRATOR) &&
-                !member.hasPermission(Permission.NICKNAME_CHANGE)) {
+                !member.hasPermission(Permission.MANAGE_CHANNEL)) {
             event.reply("❌ Only staff members can claim tickets.").setEphemeral(true).queue();
             return;
         }
@@ -165,7 +173,7 @@ public class TicketCloseCommand extends ListenerAdapter {
 
         // Check if user is staff
         if (!member.hasPermission(Permission.ADMINISTRATOR) &&
-                !member.hasPermission(Permission.NICKNAME_CHANGE)) {
+                !member.hasPermission(Permission.MANAGE_CHANNEL)) {
             event.reply("❌ Only staff members can change priority.").setEphemeral(true).queue();
             return;
         }
@@ -179,6 +187,27 @@ public class TicketCloseCommand extends ListenerAdapter {
                 .setActionRow(lowPriority, normalPriority, highPriority)
                 .setEphemeral(true)
                 .queue();
+    }
+
+    private void handlePriorityChange(ButtonInteractionEvent event, String priority, Color color) {
+        Member member = event.getMember();
+        if (member == null) return;
+
+        // Check if user is staff
+        if (!member.hasPermission(Permission.ADMINISTRATOR) &&
+                !member.hasPermission(Permission.MANAGE_CHANNEL)) {
+            event.reply("❌ Only staff members can change priority.").setEphemeral(true).queue();
+            return;
+        }
+
+        EmbedBuilder priorityEmbed = new EmbedBuilder()
+                .setTitle("🏷️ Priority Changed")
+                .setDescription("Ticket priority has been updated to **" + priority + "**")
+                .addField("Changed by", member.getAsMention(), true)
+                .setColor(color)
+                .setTimestamp(java.time.Instant.now());
+
+        event.replyEmbeds(priorityEmbed.build()).queue();
     }
 
     private void closeTicket(TextChannel channel, Member closedBy, String reason) {
@@ -205,11 +234,53 @@ public class TicketCloseCommand extends ListenerAdapter {
         System.out.println("Ticket closed: " + channel.getName() + " by " +
                 closedBy.getEffectiveName() + " - Reason: " + reason);
 
+        // Attempt to DM the ticket creator with the transcript
+        Member ticketCreator = getTicketCreator(channel, guild);
+
+        // Create file upload
+        ByteArrayInputStream fileStream = new ByteArrayInputStream(transcript.getBytes());
+        FileUpload fileUpload = FileUpload.fromData(fileStream, channel.getName()+"-transctipt.txt");
+        if (ticketCreator != null) {
+            ticketCreator.getUser().openPrivateChannel().queue(privateChannel -> {
+                privateChannel.sendMessage("Here is a transcript of your closed ticket: **" + channel.getName() + "**")
+                        .addFiles(fileUpload)
+                        .queue();
+            }, error -> System.err.println("Failed to open DM with ticket creator: " + error.getMessage()));
+        }
+
+        // Send transcript to audit log channel
+        TextChannel auditLogChannel = GhostBot.getInstance().auditLogListener.findExistingAuditChannel(guild);
+        if (auditLogChannel != null) {
+            auditLogChannel.sendMessage("Transcript for closed ticket: **" + channel.getName() + "**")
+                    .addFiles(fileUpload)
+                    .queue();
+        }
+
         // Delete channel after delay
         channel.delete().queueAfter(10, TimeUnit.SECONDS,
                 success -> System.out.println("Ticket channel deleted: " + channel.getName()),
                 error -> System.err.println("Failed to delete ticket channel: " + error.getMessage())
         );
+    }
+
+    // Helper to get the ticket creator from the channel name or history
+    private Member getTicketCreator(TextChannel channel, Guild guild) {
+        // Try to extract user ID from channel name (if you use IDs in names)
+        for (Member member : guild.getMembers()) {
+            if (channel.getName().contains(member.getUser().getId())) {
+                return member;
+            }
+        }
+        // Fallback: get first non-bot message author
+        try {
+            List<Message> messages = channel.getHistory().retrievePast(50).complete();
+            for (Message msg : messages) {
+                if (!msg.getAuthor().isBot()) {
+                    return guild.getMember(msg.getAuthor());
+                }
+            }
+        } catch (Exception ignored) {}
+        return null;
     }
 
     private String createTicketTranscript(TextChannel channel) {
@@ -223,13 +294,17 @@ public class TicketCloseCommand extends ListenerAdapter {
 
         try {
             List<Message> messages = channel.getHistory().retrievePast(50).complete();
+            // Reverse the list to show messages in chronological order
+            java.util.Collections.reverse(messages);
+
             for (Message msg : messages) {
                 transcript.append("[").append(msg.getTimeCreated().format(DateTimeFormatter.ofPattern("HH:mm:ss"))).append("] ");
                 transcript.append(msg.getAuthor().getName()).append(": ");
                 transcript.append(msg.getContentDisplay()).append("\n");
             }
         } catch (Exception e) {
-            transcript.append("Failed to retrieve message history.\n");
+            transcript.append("Failed to retrieve message history: ").append(e.getMessage()).append("\n");
+            System.err.println("Error creating transcript: " + e.getMessage());
         }
 
         return transcript.toString();
@@ -240,16 +315,16 @@ public class TicketCloseCommand extends ListenerAdapter {
     }
 
     private boolean canCloseTicket(TextChannel channel, Member member) {
-        // Staff can always close tickets
+        // Staff can always close tickets (using MANAGE_CHANNEL instead of NICKNAME_CHANGE)
         if (member.hasPermission(Permission.ADMINISTRATOR) ||
-                member.hasPermission(Permission.NICKNAME_CHANGE)) {
+                member.hasPermission(Permission.MANAGE_CHANNEL)) {
             return true;
         }
 
         // Check if this is the ticket creator
         String channelName = channel.getName();
         if (channelName.startsWith(TICKET_PREFIX)) {
-            String userIdentifier = member.getEffectiveName().toLowerCase().replaceAll("[^a-z0-9]", "");
+            String userIdentifier = member.getUser().getId();
             return channelName.contains(userIdentifier);
         }
 
