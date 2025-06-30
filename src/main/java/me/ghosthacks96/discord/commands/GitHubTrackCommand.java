@@ -136,12 +136,16 @@ public class GitHubTrackCommand extends ListenerAdapter {
                         event.getChannel().getId());
                 trackedPackages.put(name.toLowerCase(), pkg);
 
+                // Start package polling for this package
+                GhostBot.getInstance().startPackagePolling();
+
                 embed.setDescription("✅ Successfully added package `" + name + "` to tracking list!")
                         .addField("📦 Package", name, true)
                         .addField("📅 Added", java.time.OffsetDateTime.now()
                                 .format(DateTimeFormatter.ofPattern("MMM dd, yyyy 'at' HH:mm")), true)
                         .addField("🔔 Notifications", "This channel will receive updates", false)
-                        .addField("📊 Tracking", "• New package releases\n• Version updates", false);
+                        .addField("📊 Tracking", "• New package releases\n• Version updates\n• Release notes", false)
+                        .addField("🔍 Search Method", "Automatically finds the most popular GitHub repository for this package", false);
             }
             default -> {
                 embed.setColor(Color.RED)
@@ -195,9 +199,18 @@ public class GitHubTrackCommand extends ListenerAdapter {
                 if (trackedPackages.containsKey(name.toLowerCase())) {
                     embed.setDescription("🔄 Checking package `" + name + "` for new releases...")
                             .addField("📦 Package", name, true)
-                            .addField("⏰ Status", "Checking for version updates...", false);
+                            .addField("⏰ Status", "Searching GitHub for the package repository and checking for version updates...", false);
 
-                    // TODO: Implement actual package checking logic here
+                    // Trigger manual package check
+                    GhostBot bot = GhostBot.getInstance();
+                    if (bot.getPackagePollingService() != null) {
+                        bot.getPackagePollingService().manualCheckPackage(name.toLowerCase());
+                        embed.addField("✅ Check Initiated", "Manual check started! If a new version is found, you'll receive a notification shortly.", false);
+                    } else {
+                        embed.setColor(Color.RED)
+                                .setDescription("❌ Package polling service is not running.")
+                                .addField("💡 Tip", "Try restarting the bot or contact an administrator.", false);
+                    }
                 } else {
                     embed.setColor(Color.RED)
                             .setDescription("❌ Package `" + name + "` is not being tracked.")
@@ -253,6 +266,9 @@ public class GitHubTrackCommand extends ListenerAdapter {
                                         .sum() + ")",
                         packageList.toString(), false);
             }
+
+            embed.addField("🔄 Polling Status",
+                    "Package updates are checked every 10 minutes automatically", false);
         }
 
         event.getHook().editOriginalEmbeds(embed.build()).queue();
@@ -286,7 +302,8 @@ public class GitHubTrackCommand extends ListenerAdapter {
                 removed = trackedPackages.remove(name.toLowerCase()) != null;
                 if (removed) {
                     embed.setColor(Color.GREEN)
-                            .setDescription("✅ Successfully removed package `" + name + "` from tracking list.");
+                            .setDescription("✅ Successfully removed package `" + name + "` from tracking list.")
+                            .addField("ℹ️ Note", "Package polling will continue for other tracked packages", false);
                 } else {
                     embed.setColor(Color.RED)
                             .setDescription("❌ Package `" + name + "` was not found in tracking list.");
@@ -319,18 +336,24 @@ public class GitHubTrackCommand extends ListenerAdapter {
                                 "`/github check package <name>` - Manually check package for releases\n" +
                                 "`/github list` - Show all tracked items in this server", false)
                 .addField("🔔 Automatic Tracking Features",
-                        "• GitHub repository releases\n" +
+                        "**Repositories:**\n" +
+                                "• New releases and tags\n" +
                                 "• Push events and commits\n" +
-                                "• Issue and pull request comments\n" +
-                                "• Package version releases", false)
+                                "• Issue and pull request updates\n\n" +
+                                "**Packages:**\n" +
+                                "• Automatically finds the most popular GitHub repository for the package\n" +
+                                "• Monitors for new releases every 10 minutes\n" +
+                                "• Detailed release information with download counts", false)
                 .addField("📝 Examples",
                         "`/github track repo microsoft/vscode`\n" +
                                 "`/github track package react`\n" +
-                                "`/github check repo torvalds/linux`", false)
+                                "`/github track package discord.js`\n" +
+                                "`/github check package lodash`", false)
                 .addField("💡 Tips",
                         "• Repository names must be in `owner/repository` format\n" +
+                                "• Package names should match the actual package name (e.g., 'react', 'express')\n" +
                                 "• All notifications will be sent to the channel where tracking was enabled\n" +
-                                "• Use `/github list` to see what's currently being tracked", false);
+                                "• Package tracking searches GitHub for the most starred repository matching the name", false);
 
         event.getHook().editOriginalEmbeds(embed.build()).queue();
     }
@@ -341,9 +364,9 @@ public class GitHubTrackCommand extends ListenerAdapter {
 
     // Helper classes for storing tracked items
     public static class TrackedRepository {
-        final String name;
+        public final String name;
         final String guildId;
-        final String channelId;
+        public final String channelId;
         final long addedTimestamp;
 
         public TrackedRepository(String name, String guildId, String channelId) {
@@ -355,12 +378,12 @@ public class GitHubTrackCommand extends ListenerAdapter {
     }
 
     public static class TrackedPackage {
-        final String name;
+        public final String name;
         final String guildId;
-        final String channelId;
+        public final String channelId;
         final long addedTimestamp;
 
-        TrackedPackage(String name, String guildId, String channelId) {
+        public TrackedPackage(String name, String guildId, String channelId) {
             this.name = name;
             this.guildId = guildId;
             this.channelId = channelId;

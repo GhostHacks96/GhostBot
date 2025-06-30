@@ -309,7 +309,7 @@ public class GhostBot {
             if(repo.equals(repository)) {
                 GitHubPollingService service = repoPollingServices_old.get(repo);
                 if(service != null) {
-                    service.shutdown();
+                    service.DESTROY();
                     repoPollingServices.remove(repo);
                     System.out.println("Removed repository polling for: " + repo);
                     break;
@@ -318,50 +318,37 @@ public class GhostBot {
                 }
             }
         }
-
-
-        System.out.println("Repository polling removal requested for: " + repository);
-        System.out.println("Note: Individual repository removal not fully implemented. Consider restarting bot to clear all polling.");
-    }
+}
 
 
 
     private void shutdown() {
         System.out.println("Shutting down GhostBot...");
-        // Reset GitHub repo polling data to only store currently tracked repos in github_repos config
-        try {
-            Config githubReposConfig = configManager.getConfig("github_repos");
-            if (githubReposConfig != null && repoPollingServices != null) {
-                // Clear all owners
-                githubReposConfig.getData().clear();
-                // Refill with only currently tracked repos
-                for (Map.Entry<String, GitHubPollingService> entry : repoPollingServices.entrySet()) {
-                    String repoFull = entry.getKey(); // owner/repo
-                    GitHubPollingService service = entry.getValue();
-                    String[] parts = repoFull.split("/");
-                    if (parts.length == 2) {
-                        String owner = parts[0];
-                        String repo = parts[1];
-                        String channelId = service.getChannelId();
-                        // Add to config
-                        List<Object> ownerRepos = (List<Object>) githubReposConfig.get(owner);
-                        if (ownerRepos == null) {
-                            ownerRepos = new java.util.ArrayList<>();
-                            githubReposConfig.set(owner, ownerRepos);
-                        }
-                        java.util.Map<String, Object> repoObj = new java.util.HashMap<>();
-                        repoObj.put("name", repo);
-                        repoObj.put("channel_id", channelId);
-                        ownerRepos.add(repoObj);
-                    }
-                }
-                githubReposConfig.save();
-            }
-        } catch (Exception e) {
-            System.err.println("Error updating github_repos config on shutdown: " + e.getMessage());
-        }
 
-        // Optionally, persist only tracked repos to config or file here if needed
+        Config gitRepos = configManager.getConfig("github_repos");
+        gitRepos.load();
+        // Instead of clear(), replace the internal data map with new data
+        // Map to collect owner -> list of repo maps
+        Map<String, List<Map<String, String>>> ownerRepoMap = new java.util.HashMap<>();
+        for (String repoName : trackedRepos.keySet()) {
+            GitHubTrackCommand.TrackedRepository repo = trackedRepos.get(repoName);
+            if (repo != null) {
+                String[] info = repo.name.split("/");
+                if (info.length == 2) {
+                    String owner = info[0];
+                    String name = info[1];
+                    String channelId = repo.channelId;
+                    Map<String, String> repoMap = new java.util.HashMap<>();
+                    repoMap.put("name", name);
+                    repoMap.put("channel_id", channelId);
+                    ownerRepoMap.computeIfAbsent(owner, k -> new java.util.ArrayList<>()).add(repoMap);
+                }
+            }
+        }
+        // Overwrite the config's internal data map
+        gitRepos.getData().clear();
+        gitRepos.getData().putAll(ownerRepoMap);
+        gitRepos.save();
 
         if (antiSpamListener != null) {
             antiSpamListener.shutdown();

@@ -9,6 +9,7 @@ import com.google.gson.JsonArray;
 import net.dv8tion.jda.api.entities.channel.Channel;
 import net.dv8tion.jda.api.entities.channel.concrete.TextChannel;
 
+import java.io.File;
 import java.io.IOException;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
@@ -31,6 +32,7 @@ public class GitHubPollingService {
     private final Set<String> processedEventIds;
     private final ScheduledExecutorService scheduler;
     private final String repo;
+    private final File processedEventsFile;
 
     // Store last check times for each repo
     private final Map<String, OffsetDateTime> lastCheckTimes;
@@ -45,7 +47,34 @@ public class GitHubPollingService {
         this.processedEventIds = new HashSet<>();
         this.scheduler = Executors.newScheduledThreadPool(2);
         this.lastCheckTimes = new HashMap<>();
+        this.processedEventsFile = new File("data/processed_events/" + repoID.replace('/', '_') + ".txt");
+        loadProcessedEvents();
         Runtime.getRuntime().addShutdownHook(new Thread(this::shutdown));
+    }
+
+    private void loadProcessedEvents() {
+        try {
+            if (!processedEventsFile.getParentFile().exists()) {
+                processedEventsFile.getParentFile().mkdirs();
+            }
+            if (processedEventsFile.exists()) {
+                List<String> lines = java.nio.file.Files.readAllLines(processedEventsFile.toPath());
+                processedEventIds.addAll(lines);
+            }
+        } catch (Exception e) {
+            System.err.println("Failed to load processed events for repo: " + repo + ", error: " + e.getMessage());
+        }
+    }
+
+    private void saveProcessedEvents() {
+        try {
+            if (!processedEventsFile.getParentFile().exists()) {
+                processedEventsFile.getParentFile().mkdirs();
+            }
+            java.nio.file.Files.write(processedEventsFile.toPath(), processedEventIds);
+        } catch (Exception e) {
+            System.err.println("Failed to save processed events for repo: " + repo + ", error: " + e.getMessage());
+        }
     }
 
     public String getChannelId() {
@@ -85,8 +114,10 @@ public class GitHubPollingService {
             // Default to 1 hour ago if never checked before
             since = OffsetDateTime.now().minusHours(1);
         }
+        String fullUrl = url + "?since=" + since.format(DateTimeFormatter.ISO_INSTANT);
+        System.out.println("[GitHubPollingService] Checking commits at: " + fullUrl);
         HttpRequest request = HttpRequest.newBuilder()
-                .uri(URI.create(url + "?since=" + since.format(DateTimeFormatter.ISO_INSTANT)))
+                .uri(URI.create(fullUrl))
                 .header("Authorization", "Bearer " + githubToken)
                 .header("Accept", "application/vnd.github.v3+json")
                 .GET()
@@ -184,14 +215,26 @@ public class GitHubPollingService {
         }
     }
 
+    private boolean isDuplicateEmbed(String repository, String uniqueId) {
+        // Use processedEventIds to track already posted events
+        return processedEventIds.contains(repository + "_" + uniqueId);
+    }
+
+    private void markEmbedPosted(String repository, String uniqueId) {
+        processedEventIds.add(repository + "_" + uniqueId);
+    }
+
     private void sendCommitNotification(String repository, JsonObject commit) {
+        String sha = commit.get("sha").getAsString();
+        if (isDuplicateEmbed(repository, sha)) return;
+
         TextChannel channel = jda.getTextChannelById(channelId);
         if (channel == null) return;
 
         JsonObject commitData = commit.getAsJsonObject("commit");
         JsonObject author = commitData.getAsJsonObject("author");
         String message = commitData.get("message").getAsString();
-        String sha = commit.get("sha").getAsString().substring(0, 7);
+        sha = sha.substring(0, 7); // Shorten SHA for display
 
         if (message.length() > 100) {
             message = message.substring(0, 97) + "...";
@@ -207,9 +250,13 @@ public class GitHubPollingService {
                 .setUrl(commit.get("html_url").getAsString());
 
         channel.sendMessageEmbeds(embed.build()).queue();
+        markEmbedPosted(repository, sha);
     }
 
     private void sendIssueCommentNotification(String repository, JsonObject comment) {
+        String commentId = comment.get("id").getAsString();
+        if (isDuplicateEmbed(repository, "issue_comment_" + commentId)) return;
+
         TextChannel channel = jda.getTextChannelById(channelId);
         if (channel == null) return;
 
@@ -232,9 +279,13 @@ public class GitHubPollingService {
                 .setUrl(comment.get("html_url").getAsString());
 
         channel.sendMessageEmbeds(embed.build()).queue();
+        markEmbedPosted(repository, "issue_comment_" + commentId);
     }
 
     private void sendPRCommentNotification(String repository, JsonObject comment) {
+        String commentId = comment.get("id").getAsString();
+        if (isDuplicateEmbed(repository, "pr_comment_" + commentId)) return;
+
         TextChannel channel = jda.getTextChannelById(channelId);
         if (channel == null) return;
 
@@ -257,6 +308,7 @@ public class GitHubPollingService {
                 .setUrl(comment.get("html_url").getAsString());
 
         channel.sendMessageEmbeds(embed.build()).queue();
+        markEmbedPosted(repository, "pr_comment_" + commentId);
     }
 
     /**
@@ -273,6 +325,7 @@ public class GitHubPollingService {
 
 
     public void shutdown() {
+        saveProcessedEvents();
         scheduler.shutdown();
         try {
             if (!scheduler.awaitTermination(30, TimeUnit.SECONDS)) {
@@ -282,5 +335,14 @@ public class GitHubPollingService {
             scheduler.shutdownNow();
         }
         System.out.println("GitHubPollingService shutdown complete.");
+    }
+
+    public void DESTROY() {
+        try{
+            shutdown();
+            processedEventsFile.delete();
+        }catch(Exception e){
+
+        }
     }
 }
